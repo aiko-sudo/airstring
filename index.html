@@ -1,0 +1,1902 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<link rel="icon" href="data:,">
+<meta name="description" content="AirString 空气弦乐器 - 摄像头手部追踪 + Web Audio 实时合成, 24 种乐器在空气中演奏">
+<title>AirString · 空气弦乐器</title>
+<style>
+:root {
+  --bg: #0e1116;
+  --panel: rgba(18, 22, 31, 0.94);
+  --panel-border: rgba(255, 255, 255, 0.09);
+  --text: #e8ecf3;
+  --text-dim: #9aa5b5;
+  --accent: #f5b83d;
+  --accent-dim: rgba(245, 184, 61, 0.25);
+  --danger: #ff6b6b;
+  --radius: 10px;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  font-size: 16px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Hiragino Sans GB",
+               "Microsoft YaHei", -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+#cam {
+  position: fixed; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: contain;   /* 完整画面居中; 配合 VideoMap 的 zoom 以中心放大 */
+  transform: scaleX(-1) scale(var(--vz, 1.3));
+  opacity: 0.55;
+  display: none;
+}
+body.show-video #cam { display: block; }
+/* 手势说明侧栏(淡色小字, 摄像头模式) */
+#guide {
+  position: fixed; left: 6px; top: 50%; transform: translateY(-50%);
+  z-index: 40; max-width: 30vw;
+  font: 11px/1.65 "Noto Sans SC", sans-serif;
+  color: rgba(159, 176, 198, .72);
+  background: rgba(8, 12, 20, .38);
+  border-left: 2px solid rgba(110, 231, 255, .25);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 10px 10px 9px;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0,0,0,.8);
+}
+#guide b { color: rgba(110, 231, 255, .85); font-weight: 600; }
+@media (max-width: 600px) {
+  #guide { font-size: 10px; max-width: 34vw; padding: 8px 8px 8px 7px; }
+}
+#stage {
+  position: fixed; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+}
+/* ---------- HUD ---------- */
+#hud {
+  position: fixed; top: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 24px;
+  pointer-events: none;
+  z-index: 30;
+}
+#hud .brand {
+  display: flex; align-items: baseline; gap: 8px;
+  font-weight: 700; font-size: 18px; letter-spacing: 0.5px;
+}
+#hud .brand small { font-weight: 400; font-size: 12px; color: var(--text-dim); }
+#hud .right { display: flex; gap: 8px; pointer-events: auto; }
+.hud-btn {
+  appearance: none; border: 1px solid var(--panel-border);
+  background: var(--panel); color: var(--text);
+  border-radius: 8px; padding: 8px 16px;
+  font-size: 13px; font-family: inherit;
+  cursor: pointer; backdrop-filter: blur(8px);
+  min-height: 44px;
+}
+.hud-btn:hover, .hud-btn.hot { border-color: var(--accent); color: var(--accent); }
+#status {
+  position: fixed; left: 24px; bottom: 20px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-dim);
+  z-index: 30; pointer-events: none;
+}
+#status .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #556; transition: background 0.2s;
+}
+#status .dot.ok { background: #34d399; }
+#status .dot.warn { background: var(--accent); }
+#hint {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+  font-size: 13px; color: var(--text-dim);
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 999px; padding: 8px 20px;
+  z-index: 30; pointer-events: none;
+  backdrop-filter: blur(8px);
+  max-width: min(92vw, 640px); text-align: center;
+}
+/* ---------- start screen ---------- */
+#start {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(120% 120% at 50% 0%, #1a2233 0%, var(--bg) 60%);
+}
+#start .card {
+  width: min(560px, 92vw);
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 16px; box-shadow: var(--shadow);
+  padding: 48px 40px; text-align: center;
+}
+#start h1 { font-size: 32px; font-weight: 800; letter-spacing: 1px; }
+#start h1 em { font-style: normal; color: var(--accent); }
+#start p.sub { margin-top: 8px; font-size: 14px; color: var(--text-dim); line-height: 1.7; }
+#start .actions { margin-top: 32px; display: flex; flex-direction: column; gap: 12px; }
+.big-btn {
+  appearance: none; cursor: pointer; font-family: inherit;
+  border: 1px solid var(--accent); color: var(--accent);
+  background: rgba(245, 184, 61, 0.08);
+  border-radius: 10px; padding: 16px;
+  font-size: 16px; font-weight: 600;
+  min-height: 48px;
+}
+.big-btn.alt { border-color: var(--panel-border); color: var(--text); background: transparent; }
+.big-btn:hover { background: rgba(245, 184, 61, 0.16); }
+.big-btn.alt:hover { background: rgba(255, 255, 255, 0.06); }
+#start .foot { margin-top: 24px; font-size: 12px; color: var(--text-dim); }
+#loadfoot {
+  margin-top: 12px; min-height: 18px;
+  font-size: 13px; color: var(--text-dim); text-align: center; line-height: 1.5;
+}
+#camErr {
+  display: none; margin-top: 16px;
+  font-size: 13px; color: var(--danger);
+  background: rgba(255, 107, 107, 0.08);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  border-radius: 8px; padding: 12px 16px; line-height: 1.6; text-align: left;
+}
+/* ---------- panels: help / settings / menu ---------- */
+.panel {
+  position: fixed; z-index: 60;
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 14px; box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+  display: none;
+}
+.panel.open { display: block; }
+.panel .p-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--panel-border);
+}
+.panel .p-head h3 { font-size: 16px; font-weight: 700; }
+.p-close {
+  appearance: none; border: none; background: none; color: var(--text-dim);
+  font-size: 18px; cursor: pointer; padding: 4px 8px; line-height: 1;
+}
+.p-close:hover { color: var(--text); }
+#help {
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(620px, 94vw); max-height: 86vh; overflow-y: auto;
+}
+#help .p-body { padding: 20px 24px; font-size: 14px; line-height: 1.8; color: var(--text-dim); }
+#help .p-body b { color: var(--text); }
+#help .step { display: flex; gap: 16px; margin-bottom: 16px; }
+#help .step .n {
+  flex: none; width: 32px; height: 32px; border-radius: 50%;
+  background: var(--accent-dim); color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px;
+}
+#help h4 { margin: 16px 0 8px; font-size: 13px; color: var(--text); }
+#help ul { padding-left: 20px; }
+#help li { margin: 4px 0; }
+#help .kbd {
+  font-family: "SF Mono", "Fira Code", monospace; font-size: 12px;
+  background: rgba(255,255,255,0.07); padding: 1px 6px; border-radius: 4px;
+}
+#settings {
+  top: 72px; right: 24px; width: min(320px, 92vw);
+}
+#settings .p-body { padding: 20px; }
+.set-row { margin-bottom: 20px; }
+.set-row label { display: block; font-size: 13px; margin-bottom: 8px; }
+.set-row label small { display: block; color: var(--text-dim); font-size: 12px; margin-top: 2px; }
+.set-row input[type="range"] {
+  width: 100%; accent-color: var(--accent); height: 24px;
+}
+.set-row .chk { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+.set-row input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+/* ---------- string badge menu ---------- */
+#menu {
+  width: min(480px, 94vw); max-height: 80vh; overflow-y: auto;
+}
+#menu .p-body { padding: 16px 20px 20px; }
+#menu [data-act="confirm-menu"], #menu [data-act="del-string"] { min-width: 112px; min-height: 56px; font-size: 16px; }
+#menuTitle { text-align: center; margin: 4px 0 12px; font-size: 16px; }
+.m-sec { margin-bottom: 16px; }
+.m-sec > h4 {
+  font-size: 12px; color: var(--text-dim); font-weight: 600;
+  margin-bottom: 8px; letter-spacing: 1px;
+}
+.chip-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.chip {
+  appearance: none; border: 1px solid var(--panel-border);
+  background: rgba(255,255,255,0.04); color: var(--text);
+  border-radius: 8px; padding: 8px 6px;
+  font-size: 12px; font-family: inherit; cursor: pointer;
+  text-align: center; line-height: 1.3; min-height: 44px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chip.hot { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.chip:hover { border-color: rgba(255,255,255,0.3); }
+.chip.on { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); font-weight: 600; }
+.chip.danger { color: var(--danger); border-color: rgba(255,107,107,0.35); }
+.chip.danger.on, .chip.danger:hover { background: rgba(255,107,107,0.12); }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-row .chip { flex: none; padding: 8px 10px; }
+.m-oct { display: flex; align-items: center; gap: 12px; }
+.m-oct .chip { width: 44px; font-size: 16px; }
+.m-oct .val { font-size: 16px; font-weight: 700; min-width: 32px; text-align: center; }
+#toast {
+  position: fixed; top: 72px; left: 50%; transform: translateX(-50%);
+  background: var(--panel); border: 1px solid var(--panel-border);
+  color: var(--text); font-size: 13px;
+  border-radius: 8px; padding: 10px 20px; z-index: 90;
+  opacity: 0; transition: opacity 0.25s; pointer-events: none;
+  max-width: 88vw; text-align: center; backdrop-filter: blur(8px);
+}
+#toast.show { opacity: 1; }
+.hidden { display: none !important; }
+/* 武装态(画弦模式)光标与提示 */
+body.armed { cursor: crosshair; }
+body.armed::after {
+  content: ''; position: fixed; inset: 0; z-index: 20;
+  border: 1px dashed rgba(245, 184, 61, 0.35);
+  pointer-events: none;
+}
+/* 触屏(粗指针)目标放大 */
+html.coarse body { -webkit-touch-callout: none; }
+html.coarse .hud-btn { min-height: 44px; padding: 10px 14px; font-size: 14px; }
+html.coarse .chip { min-height: 44px; font-size: 13px; }
+html.coarse .p-close { padding: 8px 12px; font-size: 20px; }
+html.coarse #hint { max-width: 78vw; font-size: 13px; }
+html.coarse .big-btn { font-size: 17px; }
+#hint, #status { transition: opacity .2s; }
+@media (max-width: 600px) {
+  #hud { padding: 12px 16px; }
+  #hud .brand small { display: none; }
+  .hud-btn { padding: 8px 10px; font-size: 12px; }
+  #hint { font-size: 12px; padding: 8px 14px; bottom: 56px; }
+  #status { bottom: 12px; left: 16px; }
+  .chip-grid { grid-template-columns: repeat(3, 1fr); }
+  #start .card { padding: 32px 24px; }
+}
+</style>
+</head>
+<body>
+<video id="cam" playsinline muted autoplay></video>
+<canvas id="stage"></canvas>
+
+<header id="hud" class="hidden">
+  <div class="brand">AirString <small>空气弦乐器 · 24 instruments</small></div>
+  <nav class="right">
+    <button class="hud-btn" data-act="help">帮助</button>
+    <button class="hud-btn" data-act="settings">设置</button>
+    <button class="hud-btn" data-act="draw">＋画弦</button>
+    <button class="hud-btn" data-act="demo">示例舞台</button>
+    <button class="hud-btn" data-act="clear">清空</button>
+  </nav>
+</header>
+
+<div id="status" class="hidden"><span class="dot" id="statusDot"></span><span id="statusText">未启动</span></div>
+<div id="hint" class="hidden"></div>
+
+<section id="start">
+  <div class="card">
+    <h1>Air<em>String</em> 空气弦乐器</h1>
+    <div id="diag" style="position:fixed;top:calc(env(safe-area-inset-top,0px) + 46px);right:8px;z-index:99;font:10px/1.4 monospace;color:#6ee7ff;background:rgba(0,0,0,.55);padding:4px 6px;border-radius:6px;display:none;max-width:62vw;text-align:right"></div>
+    <div id="guide" style="display:none"></div>
+    <p class="sub">对着摄像头捏合双手、向两侧拉开，在空气里绷出一根弦。<br>
+    指尖扫过琴弦即可演奏，24 种乐器全部由代码实时合成，无任何音频文件。</p>
+    <div class="actions">
+      <button class="big-btn" data-act="start-cam">启动摄像头演奏</button>
+      <button class="big-btn alt" data-act="start-mouse">用鼠标 / 触摸演奏</button>
+    </div>
+    <div id="loadfoot"></div>
+    <div id="camErr"></div>
+    <p class="foot">手部追踪在本机浏览器内完成（MediaPipe），画面不上传任何服务器</p>
+  </div>
+</section>
+
+<div id="help" class="panel">
+  <div class="p-head"><h3>怎么玩</h3><button class="p-close" data-act="close-panel">✕</button></div>
+  <div class="p-body">
+    <div class="step"><span class="n">1</span><div><b>绷弦</b>：双手拇指与食指捏合，向两侧拉开再松手，一根弦就留在空中。弦越长，容纳的音符越多。</div></div>
+    <div class="step"><span class="n">2</span><div><b>选琴</b>：新弦上方会弹出乐器面板，指向并停顿（或捏合）即可选定乐器、音阶、调性。</div></div>
+    <div class="step"><span class="n">3</span><div><b>演奏</b>：任意指尖快速扫过琴弦即拨响，速度越快声音越响。鼠标模式下：拖拽画弦、划过琴弦演奏。</div></div>
+    <h4>更多手势</h4>
+    <ul>
+      <li><b>换乐器</b>：单手捏住弦中央的徽章并保持约 1 秒，松手后可换乐器 / 音阶 / 调性 / 八度 / 和弦模式 / 删除。</li>
+      <li><b>删除单根弦</b>：捏住该弦徽章约 1 秒打开菜单，松手后捏合「删除这根弦」。</li>
+      <li><b>调弦长</b>：捏住弦的端点拖动；缩到很短也会删除该弦。</li>
+      <li><b>琥珀色圆环</b>：拇指与食指之间的指针，捏合时圆环收缩。</li>
+      <li><b>面板与按钮</b>：指针停在选项上约 0.7 秒，或直接捏合。</li>
+    </ul>
+    <h4>鼠标 / 触摸模式</h4>
+    <ul>
+      <li><b>演奏</b>：光标或手指快速划过琴弦即可，不需要按下去。</li>
+      <li><b>画弦</b>：先点上方「＋画弦」，再在空白处按住拖动，松手成弦（桌面快捷键 <span class="kbd">N</span>）。</li>
+      <li><b>换乐器</b>：在弦中央的徽章上<b>轻点一下</b>（按住拖动不会弹菜单）。</li>
+      <li><b>调弦长</b>：按住弦两端的圆点拖动；缩到很短即删除。</li>
+      <li><b>快捷键</b>：<span class="kbd">N</span> 画弦 · <span class="kbd">H</span> 帮助 · <span class="kbd">D</span> 示例 · <span class="kbd">Esc</span> 收起。</li>
+    </ul>
+    <h4>小技巧</h4>
+    <ul>
+      <li>捏合不灵敏或误触时，在<span class="kbd">设置</span>中调节「捏合灵敏度」。</li>
+      <li>光线充足、手掌完整入画时追踪最稳。</li>
+    </ul>
+  </div>
+</div>
+
+<div id="settings" class="panel">
+  <div class="p-head"><h3>设置</h3><button class="p-close" data-act="close-panel">✕</button></div>
+  <div class="p-body">
+    <div class="set-row">
+      <label>主音量 <small>整体输出电平</small></label>
+      <input type="range" id="sVol" min="0" max="1" step="0.05" data-slider="vol">
+    </div>
+    <div class="set-row">
+      <label>回声 <small>延迟效果发送量</small></label>
+      <input type="range" id="sEcho" min="0" max="1" step="0.05" data-slider="echo">
+    </div>
+    <div class="set-row">
+      <label>空间感 <small>混响发送量</small></label>
+      <input type="range" id="sRev" min="0" max="1" step="0.05" data-slider="rev">
+    </div>
+    <div class="set-row">
+      <label>捏合灵敏度 <small>数值越高越容易触发捏合</small></label>
+      <input type="range" id="sSens" min="0.5" max="1.6" step="0.05" data-slider="sens">
+    </div>
+    <div class="set-row">
+      <label>画面缩放 <small>摄像头画面与互动区域放大倍数（竖屏建议 1.3~1.6）</small></label>
+      <input type="range" id="sZoom" min="0.6" max="2.2" step="0.05" data-slider="zoom">
+    </div>
+    <div class="set-row">
+      <label class="chk"><input type="checkbox" id="sVideo"> 显示摄像头画面（关闭则纯黑舞台）</label>
+    </div>
+    <div class="set-row">
+      <button class="chip" data-act="start-cam" style="width:100%">切换到摄像头模式</button>
+    </div>
+  </div>
+</div>
+
+<div id="menu" class="panel">
+  <div class="p-head"><button class="chip danger" data-act="del-string">删除这根弦</button><button class="chip" data-act="confirm-menu">✓ 完成</button></div>
+  <div style="padding: 0 20px 12px; color: var(--text-dim); font-size: 13px">移动手指到选项，捏合选择；捏合「完成」关闭</div>
+  <div class="p-body">
+    <h3 id="menuTitle">弦</h3>
+    <div class="m-sec"><h4>乐器 · 24</h4><div class="chip-grid" id="mInst"></div></div>
+    <div class="m-sec"><h4>音阶</h4><div class="chip-row" id="mScale"></div></div>
+    <div class="m-sec"><h4>调性</h4><div class="chip-row" id="mKey"></div></div>
+    <div class="m-sec"><h4>八度</h4>
+      <div class="m-oct">
+        <button class="chip" data-act="oct-down">−</button>
+        <span class="val" id="mOct">0</span>
+        <button class="chip" data-act="oct-up">＋</button>
+      </div>
+    </div>
+    <div class="m-sec"><h4>演奏模式</h4>
+      <div class="chip-row">
+        <button class="chip" data-act="chord">和弦（三音）</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+/* ============================================================
+ * AirString — 空气弦乐器（净室实现）
+ * 概念参照: Hashem Al-Ghaili "Music Maker"（本仓库未复制其任何代码）
+ * 手部追踪: MediaPipe Tasks Vision (Apache-2.0, 本地 vendor 离线运行)
+ * 声音合成: Web Audio API, 全部实时计算, 零音频采样
+ * ============================================================ */
+
+/* ---------- 配置 ---------- */
+const CFG = {
+  pointerR: 26,            // 指针环半径(px)
+  pinchOn: 0.55,           // 捏合触发比(×灵敏度)
+  pinchOff: 0.8,           // 松开恢复比(滞回)
+  minStringPx: 110,        // 最短成弦长度
+  maxNotes: 13,            // 单弦最多音符数
+  noteSpacingPx: 88,       // 每音符占用的弦长
+  pluckCooldown: 120,       // 同一指尖拨奏冷却(ms)
+  dwellMs: 700,            // 悬停选中时长
+  palmClosePx: 120,        // 双掌并拢判定(关菜单)
+  palmOpenPx: 280,         // 并拢后拉开判定(开菜单), 与关阈值滞回
+  palmHoldMs: 420,         // 必须稳定合掌 0.42 秒才武装，避免演奏时路过误触
+  handInferFps: 15,        // 低发热模式推理上限；绘制仍连续
+  handIdleFps: 6,          // 无手时进一步降低；避免摄像头常驻把 iPad 烤热
+  canvasDprCap: 1.25,      // 手机/平板 Canvas 上限，视觉清晰且显著降 GPU/CPU 负载
+  badgeR: 30,              // (保留: 摄像头模式徽章粗命中)
+  endR: 24,                // 端点命中半径(px)
+};
+/* 粗指针(触屏)环境: 命中区与 UI 目标整体放大 */
+const COARSE = matchMedia('(pointer: coarse)').matches;
+if (COARSE) {
+  CFG.endR = 34;
+  document.documentElement.classList.add('coarse');
+}
+
+/* ---------- 音乐理论 ---------- */
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const midiToFreq = m => 440 * Math.pow(2, (m - 69) / 12);
+const SCALES = {
+  major:    { name: '大调',       steps: [0, 2, 4, 5, 7, 9, 11] },
+  minor:    { name: '自然小调',   steps: [0, 2, 3, 5, 7, 8, 10] },
+  pentamaj: { name: '大调五声',   steps: [0, 2, 4, 7, 9] },
+  pentamin: { name: '小调五声',   steps: [0, 3, 5, 7, 10] },
+  blues:    { name: '布鲁斯',     steps: [0, 3, 5, 6, 7, 10] },
+  dorian:   { name: '多利亚',     steps: [0, 2, 3, 5, 7, 9, 10] },
+  hijaz:    { name: 'Hijaz',     steps: [0, 1, 4, 5, 7, 8, 10] },
+};
+const SCALE_ORDER = Object.keys(SCALES);
+
+/** 音阶级数 -> MIDI 音号（可越级跨八度；oct=2 时根音为 C4=60） */
+function degreeMidi(scaleId, root, oct, deg) {
+  const steps = SCALES[scaleId].steps;
+  const n = steps.length;
+  const o = Math.floor(deg / n), i = ((deg % n) + n) % n;
+  return 12 * (oct + 2) + root + 12 * o + steps[i];
+}
+
+/* ---------- 24 乐器定义 ----------
+ * family: pluck(Karplus-Strong) / keys(击弦·共鸣) / sustained(持续运弓)
+ *         / color(色彩打击) / bass(低音) / kit(鼓组分区)
+ * oct: 默认八度偏移  voice: 合成参数(见 AudioEngine)
+ */
+const DRUM_KIT = [
+  { id: 'kick', label: '底鼓' }, { id: 'snare', label: '军鼓' },
+  { id: 'hat', label: '踩镲' },  { id: 'clap', label: '拍手' },
+  { id: 'tom', label: '桶鼓' },
+];
+const HAND_KIT = [
+  { id: 'conga', label: '康加' }, { id: 'djembe', label: '金贝' },
+  { id: 'bongo', label: '邦戈' }, { id: 'shaker', label: '沙锤' },
+];
+const INSTRUMENTS = {
+  guitar:  { name: 'Guitar',          cn: '木吉他',  color: '#ffd166', oct: 3, family: 'pluck',    voice: { type: 'ks', bright: .55, damp: .9960, dur: 2.6 } },
+  egtr:    { name: 'E-Guitar',        cn: '电吉他',  color: '#ff5d73', oct: 3, family: 'pluck',    voice: { type: 'ks', bright: .82, damp: .9970, dur: 2.4, drive: 4 } },
+  harp:    { name: 'Harp',            cn: '竖琴',    color: '#8ff0c0', oct: 4, family: 'pluck',    voice: { type: 'ks', bright: .74, damp: .9948, dur: 3.2 } },
+  oud:     { name: 'Oud',             cn: '乌德琴',  color: '#ff9e6b', oct: 3, family: 'pluck',    voice: { type: 'ks', bright: .60, damp: .9940, dur: 1.9 } },
+  qanun:   { name: 'Qanun',           cn: '卡农琴',  color: '#c9e265', oct: 4, family: 'pluck',    voice: { type: 'ks', bright: .70, damp: .9950, dur: 2.2 } },
+  sitar:   { name: 'Sitar',           cn: '西塔琴',  color: '#e6a0ff', oct: 3, family: 'pluck',    voice: { type: 'ks', bright: .86, damp: .9970, dur: 3.4, buzz: .3 } },
+
+  piano:   { name: 'Piano',           cn: '钢琴',    color: '#dfeaff', oct: 3, family: 'keys',     voice: { type: 'add', partials: [[1, 1], [2, .5], [3, .28], [4, .16], [5, .1], [6, .06]], inh: .0004, dur: 2.6 } },
+  epiano:  { name: 'E-Piano',         cn: '电钢琴',  color: '#9fb8ff', oct: 3, family: 'keys',     voice: { type: 'fm', ratio: 1, index: 5, tine: 14, dur: 2.2 } },
+  organ:   { name: 'Organ',           cn: '管风琴',  color: '#d9a877', oct: 3, family: 'sustained',voice: { type: 'organ', atk: .015, rel: .25, dur: .9 } },
+  marimba: { name: 'Marimba',         cn: '马林巴',  color: '#f2b880', oct: 4, family: 'color',    voice: { type: 'add', partials: [[1, 1], [3.93, .25], [9.2, .08]], inh: 0, dur: .9 } },
+  kalimba: { name: 'Kalimba',         cn: '卡林巴',  color: '#7fe0d0', oct: 4, family: 'color',    voice: { type: 'add', partials: [[1, 1], [2.4, .18], [5.1, .06]], inh: 0, dur: 1.1 } },
+  steelpan:{ name: 'Steel Pan',       cn: '钢鼓',    color: '#5fd4f4', oct: 4, family: 'color',    voice: { type: 'add', partials: [[1, 1], [2.02, .4], [3.05, .2], [4.6, .08]], inh: .001, dur: 1.6 } },
+
+  violin:  { name: 'Violin',          cn: '小提琴',  color: '#ffa8c5', oct: 4, family: 'sustained',voice: { type: 'bow', wave: 'sawtooth', cut: 2800, vib: 6, vibAmt: .006, atk: .12, rel: .5, dur: 1.3 } },
+  cello:   { name: 'Cello',           cn: '大提琴',  color: '#d98cb3', oct: 2, family: 'sustained',voice: { type: 'bow', wave: 'sawtooth', cut: 1400, vib: 5, vibAmt: .007, atk: .16, rel: .6, dur: 1.5 } },
+  strings: { name: 'Strings',         cn: '弦乐组',  color: '#ff8fd0', oct: 3, family: 'sustained',voice: { type: 'ens', cut: 2600, atk: .18, rel: .7, dur: 1.6 } },
+  flute:   { name: 'Flute',           cn: '长笛',    color: '#9eeaff', oct: 4, family: 'sustained',voice: { type: 'wind', wave: 'sine', cut: 5000, breath: .04, atk: .08, rel: .35, dur: 1.2 } },
+  trumpet: { name: 'Trumpet',         cn: '小号',    color: '#f5b83d', oct: 4, family: 'sustained',voice: { type: 'bow', wave: 'square', cut: 2000, cutEnv: 2600, vib: 5.5, vibAmt: .004, atk: .05, rel: .3, dur: 1.0 } },
+  voices:  { name: 'Voices',          cn: '人声',    color: '#d4c5ff', oct: 3, family: 'sustained',voice: { type: 'vox', atk: .22, rel: .8, dur: 1.8 } },
+
+  bells:   { name: 'Bells',           cn: '钟琴',    color: '#fff59a', oct: 5, family: 'color',    voice: { type: 'add', partials: [[1, 1], [2.76, .5], [5.4, .22], [8.9, .08]], inh: 0, dur: 2.8 } },
+  synth:   { name: 'Synth',           cn: '合成器',  color: '#6dff9c', oct: 4, family: 'color',    voice: { type: 'syn', cutFrom: 2400, cutTo: 500, q: 7, dur: .9 } },
+  bass:    { name: 'Bass',            cn: '贝斯',    color: '#7aa8ff', oct: 1, family: 'bass',     voice: { type: 'bass', cutFrom: 900, cutTo: 240, sub: .6, dur: .8 } },
+  sub:     { name: '808 Bass',        cn: '808贝斯', color: '#5b8cff', oct: 1, family: 'bass',     voice: { type: '808', dur: 1.4 } },
+  drums:   { name: 'Drums',           cn: '鼓组',    color: '#ff6b6b', oct: 0, family: 'kit',      kit: DRUM_KIT },
+  handdrums:{ name: 'Hand Drums',     cn: '手鼓',    color: '#ff8552', oct: 0, family: 'kit',      kit: HAND_KIT },
+};
+const INSTRUMENT_ORDER = Object.keys(INSTRUMENTS);
+
+/* ============================================================
+ * AudioEngine — Web Audio 实时合成
+ * ============================================================ */
+const AudioEngine = (() => {
+  let ctx = null, master = null, comp = null;
+  let delaySend = null, revSend = null, analyser = null;
+  const ksCache = new Map();          // Karplus-Strong 缓冲 LRU
+  const KS_CACHE_MAX = 200;
+  const active = [];                  // 活跃语音(用于轮指占用回收)
+
+  function init() {
+    if (ctx) return ctx;
+    ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    master = ctx.createGain(); master.gain.value = Settings.get('vol');
+    comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -14; comp.ratio.value = 5; comp.knee.value = 24;
+    analyser = ctx.createAnalyser(); analyser.fftSize = 512;
+    master.connect(comp); comp.connect(analyser); analyser.connect(ctx.destination);
+
+    // 回声(并行发送)
+    const dl = ctx.createDelay(1.2); dl.delayTime.value = 0.29;
+    const dfb = ctx.createGain(); dfb.gain.value = 0.36;
+    const dlp = ctx.createBiquadFilter(); dlp.type = 'lowpass'; dlp.frequency.value = 3200;
+    delaySend = ctx.createGain(); delaySend.gain.value = Settings.get('echo');
+    delaySend.connect(dl); dl.connect(dlp); dlp.connect(dfb); dfb.connect(dl);
+    dlp.connect(master);
+
+    // 混响(生成脉冲响应)
+    const len = ctx.sampleRate * 2.2;
+    const ir = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = ir.getChannelData(c);
+      for (let i = 0; i < len; i++) {
+        const t = i / len;
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2.6) * (i < 400 ? i / 400 : 1);
+      }
+    }
+    const conv = ctx.createConvolver(); conv.buffer = ir;
+    revSend = ctx.createGain(); revSend.gain.value = Settings.get('rev');
+    revSend.connect(conv); conv.connect(master);
+    return ctx;
+  }
+  const resume = () => ctx && ctx.state === 'suspended' && ctx.resume();
+  /** 输出总线：voice -> (dry + delaySend + revSend) */
+  function bus(node, echoAmt = 1) {
+    node.connect(master);
+    if (echoAmt > 0) {
+      const e = ctx.createGain(); e.gain.value = echoAmt;
+      node.connect(e); e.connect(delaySend);
+      node.connect(revSend);
+    }
+    return node;
+  }
+  function track(node, stopAt) {
+    active.push(node);
+    if (active.length > 48) active.shift().disconnect?.();
+    node._stopAt = stopAt;
+    setTimeout(() => { const i = active.indexOf(node); i >= 0 && active.splice(i, 1); }, stopAt - ctx.currentTime + 120);
+  }
+
+  /* ---- Karplus-Strong 预计算拨弦 ---- */
+  function ksBuffer(freq, vel, p) {
+    const key = `${Math.round(freq * 10)}|${p.bright}|${p.damp}|${Math.round(vel * 4)}`;
+    if (ksCache.has(key)) { const b = ksCache.get(key); ksCache.delete(key); ksCache.set(key, b); return b; }
+    const sr = ctx.sampleRate, N = Math.floor(sr * p.dur);
+    const P = Math.max(2, Math.round(sr / freq));
+    const buf = ctx.createBuffer(1, N, sr);
+    const d = buf.getChannelData(0);
+    let line = new Float32Array(P);
+    let last = 0;
+    for (let i = 0; i < P; i++) {          // 初始激励：亮度=低通噪声
+      const w = Math.random() * 2 - 1;
+      last += p.bright * (w - last);
+      line[i] = last;
+    }
+    const idxOff = (p.buzz || 0) * 0.014;  // buzz: 旁链失谐(西塔琴嗡鸣)
+    let j = 0;
+    for (let i = 0; i < N; i++) {
+      const a = line[j], b = line[(j + 1) % P];
+      let v = p.damp * 0.5 * (a + b);
+      if (p.buzz && i % 3 === 0) v *= (1 - p.buzz * 0.5 * Math.random());
+      d[i] = a;
+      line[j] = v;
+      j = (j + 1) % P;
+      void idxOff;
+    }
+    // 峰值归一 + 力度
+    let peak = 0; for (let i = 0; i < N; i++) peak = Math.max(peak, Math.abs(d[i]));
+    const g = peak > 0 ? (0.5 * vel) / peak : 0;
+    for (let i = 0; i < N; i++) d[i] *= g;
+    ksCache.set(key, buf);
+    if (ksCache.size > KS_CACHE_MAX) ksCache.delete(ksCache.keys().next().value);
+    return buf;
+  }
+
+  /* ---- 各族发声器 ---- */
+  function voicePluck(freq, vel, p) {
+    const src = ctx.createBufferSource();
+    src.buffer = ksBuffer(freq, vel, p);
+    let out = src;
+    if (p.drive) {                          // 电吉他: 软削失真 + 音色滤波
+      const ws = ctx.createWaveShaper();
+      const n = 1024, curve = new Float32Array(n);
+      for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; curve[i] = Math.tanh(p.drive * x) / Math.tanh(p.drive); }
+      ws.curve = curve;
+      const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = 3400;
+      const pre = ctx.createGain(); pre.gain.value = 1.6;
+      src.connect(pre); pre.connect(ws); ws.connect(tone); out = tone;
+    }
+    bus(out); track(src, ctx.currentTime + p.dur);
+    src.start();
+  }
+
+  function voiceAdd(freq, vel, p) {        // 加法合成(钢琴/马林巴/钟…)
+    const g = ctx.createGain();
+    const t0 = ctx.currentTime;
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(vel * .42, t0 + .004);
+    g.gain.exponentialRampToValueAtTime(.0008, t0 + p.dur);
+    bus(g);
+    let maxEnd = 0;
+    for (const [mult, amp] of p.partials) {
+      const o = ctx.createOscillator();
+      const inh = 1 + p.inh * mult * mult;
+      o.frequency.value = freq * mult * inh;
+      const og = ctx.createGain();
+      const pd = p.dur * Math.pow(.72, Math.log2(mult + 1)); // 高次泛音衰减更快
+      og.gain.setValueAtTime(amp, t0);
+      og.gain.exponentialRampToValueAtTime(.001, t0 + pd);
+      o.connect(og); og.connect(g);
+      o.start(t0); o.stop(t0 + pd + .05);
+      maxEnd = Math.max(maxEnd, pd);
+    }
+    track(g, t0 + maxEnd);
+  }
+
+  function voiceFM(freq, vel, p) {         // FM 电钢琴(DX 风格)
+    const t0 = ctx.currentTime;
+    const car = ctx.createOscillator(); car.frequency.value = freq;
+    const mod = ctx.createOscillator(); mod.frequency.value = freq * p.ratio;
+    const modG = ctx.createGain();
+    modG.gain.setValueAtTime(freq * p.index * vel, t0);
+    modG.gain.exponentialRampToValueAtTime(freq * .05, t0 + .45);
+    mod.connect(modG); modG.connect(car.frequency);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(vel * .4, t0 + .006);
+    g.gain.exponentialRampToValueAtTime(.0008, t0 + p.dur);
+    // 起音"叮"的高频泛音
+    const tine = ctx.createOscillator(); tine.frequency.value = freq * p.tine;
+    const tg = ctx.createGain();
+    tg.gain.setValueAtTime(vel * .16, t0);
+    tg.gain.exponentialRampToValueAtTime(.001, t0 + .12);
+    car.connect(g); tine.connect(tg); tg.connect(g);
+    bus(g);
+    car.start(t0); mod.start(t0); tine.start(t0);
+    const end = t0 + p.dur + .1;
+    car.stop(end); mod.stop(end); tine.stop(end);
+    track(g, end);
+  }
+
+  function voiceSustained(freq, vel, p) {  // 运弓/管乐/人声/风琴
+    const t0 = ctx.currentTime;
+    const g = ctx.createGain();
+    const stopAt = t0 + p.dur + p.rel + .1;
+    let head = g;
+    const nodes = [];
+    const osc = (type, f, detune = 0) => {
+      const o = ctx.createOscillator(); o.type = type; o.frequency.value = f; o.detune.value = detune;
+      nodes.push(o); return o;
+    };
+    const vib = p.vib ? (() => {
+      const lfo = osc('sine', p.vib); const lg = ctx.createGain(); lg.gain.value = 0;
+      lg.gain.setValueAtTime(0, t0 + .25);
+      lg.gain.linearRampToValueAtTime(p.vibAmt * 100, t0 + .8); // cents
+      lfo.connect(lg); return { lfo, lg };
+    })() : null;
+
+    if (p.type === 'organ') {
+      for (const [m, a] of [[.5, .35], [1, 1], [2, .55], [3, .3], [4, .2], [8, .1]]) {
+        const o = osc('sine', freq * m);
+        const og = ctx.createGain(); og.gain.value = a * .22;
+        o.connect(og); og.connect(g);
+        vib && vib.lg.connect(o.detune);
+      }
+    } else if (p.type === 'ens' || p.type === 'vox') {
+      const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = p.cut || 2400;
+      filter.connect(g);
+      for (const det of [-7, 0, 7]) { osc('sawtooth', freq, det).connect(filter); }
+      if (p.type === 'vox') {              // 人声: 双共振峰
+        const f1 = ctx.createBiquadFilter(); f1.type = 'bandpass'; f1.frequency.value = 660; f1.Q.value = 5;
+        const f2 = ctx.createBiquadFilter(); f2.type = 'bandpass'; f2.frequency.value = 1040; f2.Q.value = 6;
+        const mix = ctx.createGain(); mix.gain.value = 2.4;
+        filter.disconnect(); filter.connect(f1); filter.connect(f2);
+        f1.connect(mix); f2.connect(mix); mix.connect(g);
+      }
+      vib && vib.lg.connect(filter.detune);
+      head = filter;
+      void head;
+    } else if (p.type === 'wind') {
+      const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = p.cut;
+      filter.connect(g);
+      osc(p.wave, freq).connect(filter);
+      osc(p.wave, freq * 2.005, 4).connect(filter);
+      const nb = ctx.createBufferSource(); // 气声
+      nb.buffer = noiseBuffer(p.dur);
+      const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = freq * 2.4; nf.Q.value = 1.2;
+      const ng = ctx.createGain(); ng.gain.value = p.breath * vel;
+      nb.connect(nf); nf.connect(ng); ng.connect(g);
+      nodes.push(nb);
+      vib && vib.lg.connect(filter.detune);
+    } else {                               // bow: 小提琴/大提琴/小号
+      const filter = ctx.createBiquadFilter(); filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(Math.min((p.cut + (p.cutEnv || 0)) * .5, 8000), t0);
+      filter.frequency.linearRampToValueAtTime(p.cut + (p.cutEnv || 0), t0 + .09);
+      filter.Q.value = 1.2;
+      filter.connect(g);
+      osc(p.wave, freq).connect(filter);
+      osc(p.wave, freq, 6).connect(filter);
+      if (p.wave === 'square') { osc('sawtooth', freq, -6).connect(filter); }
+      vib && vib.lg.connect(filter.detune);
+    }
+
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(vel * .5, t0 + p.atk);
+    g.gain.setValueAtTime(vel * .5, t0 + Math.max(p.atk, p.dur));
+    g.gain.exponentialRampToValueAtTime(.0008, t0 + p.dur + p.rel);
+    bus(g, p.type === 'organ' ? .6 : 1.1);
+    for (const n of nodes) { n.start(t0); n.stop(stopAt); }
+    track(g, stopAt);
+  }
+
+  function voiceSyn(freq, vel, p) {        // 滤波扫频合成器(拨奏感)
+    const t0 = ctx.currentTime;
+    const o1 = ctx.createOscillator(); o1.type = 'sawtooth'; o1.frequency.value = freq;
+    const o2 = ctx.createOscillator(); o2.type = 'square'; o2.frequency.value = freq * .5;
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = p.q;
+    f.frequency.setValueAtTime(p.cutFrom, t0);
+    f.frequency.exponentialRampToValueAtTime(p.cutTo, t0 + p.dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(vel * .34, t0 + .005);
+    g.gain.exponentialRampToValueAtTime(.0008, t0 + p.dur);
+    o1.connect(f); o2.connect(f); f.connect(g); bus(g);
+    o1.start(t0); o2.start(t0);
+    o1.stop(t0 + p.dur + .1); o2.stop(t0 + p.dur + .1);
+    track(g, t0 + p.dur + .15);
+  }
+
+  function voiceBass(freq, vel, p) {
+    const t0 = ctx.currentTime;
+    const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = freq;
+    const sub = ctx.createOscillator(); sub.type = 'sine'; sub.frequency.value = freq;
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = 2;
+    f.frequency.setValueAtTime(p.cutFrom, t0);
+    f.frequency.exponentialRampToValueAtTime(p.cutTo, t0 + p.dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(vel * .5, t0 + .006);
+    g.gain.exponentialRampToValueAtTime(.0008, t0 + p.dur);
+    const sg = ctx.createGain(); sg.gain.value = p.sub;
+    o.connect(f); sub.connect(sg); f.connect(g); sg.connect(g); bus(g);
+    o.start(t0); sub.start(t0);
+    o.stop(t0 + p.dur + .1); sub.stop(t0 + p.dur + .1);
+    track(g, t0 + p.dur + .15);
+  }
+
+  function voice808(freq, vel, p) {
+    const t0 = ctx.currentTime;
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(freq * 2.2, t0);
+    o.frequency.exponentialRampToValueAtTime(freq, t0 + .07);
+    const ws = ctx.createWaveShaper();
+    const n = 512, curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; curve[i] = Math.tanh(2.4 * x); }
+    ws.curve = curve;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(vel * .8, t0 + .008);
+    g.gain.exponentialRampToValueAtTime(.001, t0 + p.dur);
+    o.connect(ws); ws.connect(g); bus(g, .5);
+    o.start(t0); o.stop(t0 + p.dur + .1);
+    track(g, t0 + p.dur + .15);
+  }
+
+  /* ---- 鼓组(纯合成) ---- */
+  let _noise = null;
+  function noiseBuffer(dur = 1) {
+    if (_noise && _noise.duration >= dur) return _noise;
+    const sr = ctx.sampleRate;
+    const b = ctx.createBuffer(1, Math.floor(sr * Math.max(dur, 1)), sr);
+    const d = b.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    _noise = b; return b;
+  }
+  function drum(id, vel) {
+    const t0 = ctx.currentTime;
+    const env = (g, peak, dec) => {
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(peak, t0 + .003);
+      g.gain.exponentialRampToValueAtTime(.001, t0 + dec);
+    };
+    const noise = (dec, filterType, freq, q, peak) => {
+      const s = ctx.createBufferSource(); s.buffer = noiseBuffer(1);
+      const f = ctx.createBiquadFilter(); f.type = filterType; f.frequency.value = freq; f.Q.value = q;
+      const g = ctx.createGain(); env(g, peak, dec);
+      s.connect(f); f.connect(g); bus(g, .7);
+      s.start(t0); s.stop(t0 + dec + .05);
+    };
+    const tone = (f0, f1, dec, peak, type = 'sine') => {
+      const o = ctx.createOscillator(); o.type = type;
+      o.frequency.setValueAtTime(f0, t0);
+      o.frequency.exponentialRampToValueAtTime(f1, t0 + dec * .4);
+      const g = ctx.createGain(); env(g, peak, dec);
+      o.connect(g); bus(g, .5);
+      o.start(t0); o.stop(t0 + dec + .05);
+    };
+    const v = Math.max(.25, Math.min(1, vel));
+    switch (id) {
+      case 'kick':   tone(165, 44, .42, v * 1.0); noise(.02, 'lowpass', 3000, .7, v * .3); break;
+      case 'snare':  noise(.2, 'bandpass', 1900, .8, v * .55); tone(210, 150, .12, v * .4); break;
+      case 'hat':    noise(.055, 'highpass', 8200, .7, v * .4); break;
+      case 'clap':   for (let k = 0; k < 3; k++) setTimeout(() => noise(.16, 'bandpass', 1500, 1.5, v * .35), k * 11); break;
+      case 'tom':    tone(230, 120, .38, v * .8); break;
+      case 'conga':  tone(310, 265, .28, v * .7); noise(.03, 'highpass', 3000, .7, v * .2); break;
+      case 'djembe': tone(185, 150, .34, v * .8); noise(.09, 'bandpass', 900, 1, v * .3); break;
+      case 'bongo':  tone(560, 520, .18, v * .6); break;
+      case 'shaker': noise(.09, 'highpass', 5800, .8, v * .35); break;
+    }
+  }
+
+  /** 统一入口: instId 乐器 + midi 音号(鼓组忽略 midi) */
+  function playNote(instId, midi, vel = .8) {
+    if (!ctx) return;
+    const inst = INSTRUMENTS[instId];
+    if (inst.family === 'kit') { drum(inst.kit[Math.max(0, Math.min(inst.kit.length - 1, midi))]?.id ?? 'kick', vel); return; }
+    const p = inst.voice;
+    const f = midiToFreq(midi);
+    switch (p.type) {
+      case 'ks':     voicePluck(f, vel, p); break;
+      case 'add':    voiceAdd(f, vel, p); break;
+      case 'fm':     voiceFM(f, vel, p); break;
+      case 'syn':    voiceSyn(f, vel, p); break;
+      case 'bass':   voiceBass(f, vel, p); break;
+      case '808':    voice808(f, vel, p); break;
+      default:       voiceSustained(f, vel, p); break; // organ/bow/ens/wind/vox
+    }
+  }
+
+  /** 分析器平均能量(0~1) — 用于自动验收 */
+  function energy() {
+    if (!analyser) return -1;
+    const d = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(d);
+    let s = 0; for (const x of d) s += (x - 128) * (x - 128);
+    return Math.sqrt(s / d.length) / 128;
+  }
+  /** 设置面板联动 */
+  function setLevels(s) {
+    if (!ctx) return;
+    master.gain.value = s.vol;
+    delaySend.gain.value = s.echo;
+    revSend.gain.value = s.rev;
+  }
+  return { init, resume, playNote, energy, setLevels, get ctx() { return ctx; } };
+})();
+
+/* ============================================================
+ * Settings — 持久化设置
+ * ============================================================ */
+const Settings = (() => {
+  const DEF = { vol: .8, echo: .22, rev: .3, sens: 1, showVideo: true, zoom: 1.3 };
+  let s = { ...DEF };
+  try { s = { ...DEF, ...JSON.parse(localStorage.getItem('airstring.settings') || '{}') }; } catch (e) { /* 损坏则回默认 */ }
+  const save = () => { try { localStorage.setItem('airstring.settings', JSON.stringify(s)); } catch (e) { } };
+  return {
+    get: k => s[k],
+    set: (k, v) => { s[k] = v; save(); AudioEngine.setLevels?.(s); },
+    all: () => ({ ...s }),
+  };
+})();
+
+/* ============================================================
+ * HandTracker — MediaPipe 手部关键点(本地 vendor, 离线)
+ * ============================================================ */
+const HandTracker = (() => {
+  let landmarker = null, video = null, lastTs = -1, lastInferAt = -Infinity, running = false, sawHand = false;
+  /** 抖动链路兜底: 动态import/FilesetResolver 各重试3次, 间隔递增 */
+  async function retry(label, fn, tries = 3) {
+    let lastErr;
+    for (let i = 0; i < tries; i++) {
+      try { return await fn(); }
+      catch (e) { lastErr = e; console.warn(`[HandTracker] ${label} 第${i + 1}次失败:`, e?.message || e); await new Promise(r => setTimeout(r, 800 * (i + 1))); }
+    }
+    throw new Error(`${label} 连续${tries}次失败: ${lastErr?.message || lastErr}`);
+  }
+  async function start(v) {
+    video = v;
+    const { FilesetResolver, HandLandmarker } = await retry('加载视觉模块', () => import('./vendor/mediapipe/vision_bundle.js'));
+    const fileset = await retry('加载wasm', () => FilesetResolver.forVisionTasks(
+      new URL('./vendor/mediapipe/wasm/', location.href).href));
+    let lm;
+    try {
+      lm = await make('GPU');
+    } catch (e) {                           // 无 GPU/驱动受限时回退 CPU
+      console.warn('GPU delegate 不可用，回退 CPU:', e?.message || e);
+      lm = await make('CPU');
+    }
+    landmarker = lm;
+    running = true;
+    return landmarker;
+    async function make(delegate) {
+      return await HandLandmarker.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: new URL('./vendor/mediapipe/hand_landmarker.task', location.href).href,
+          delegate,
+        },
+        runningMode: 'VIDEO', numHands: 2,
+        minHandDetectionConfidence: .5, minTrackingConfidence: .5,
+      });
+    }
+  }
+  /** 视频时间戳前进才推理; 返回 [{pts(镜像归一化), handed}] */
+  function detect() {
+    if (!running || !landmarker || video.readyState < 2) return null;
+    const now = performance.now();
+    // detectForVideo 是同步主线程计算：有手 18fps，无手降至 8fps，减少平板持续发热
+    const targetFps = sawHand ? CFG.handInferFps : CFG.handIdleFps;
+    if (now - lastInferAt < 1000 / targetFps) return undefined;
+    if (video.currentTime === lastTs) return null;
+    lastTs = video.currentTime;
+    lastInferAt = now;
+    const r = landmarker.detectForVideo(video, now);
+    sawHand = (r.landmarks || []).length > 0;
+    return (r.landmarks || []).map((lm, i) => ({
+      pts: lm.map(p => ({ x: 1 - p.x, y: p.y, z: p.z })),   // 水平镜像
+      handed: r.handednesses?.[i]?.[0]?.categoryName || ('h' + i),
+    }));
+  }
+  return { start, detect, get ready() { return running; } };
+})();
+
+/* ============================================================
+ * Strings — 空气弦模型(坐标一律为视口像素)
+ * ============================================================ */
+let SID = 1;
+class AirString {
+  constructor(x1, y1, x2, y2, opts = {}) {
+    this.id = SID++;
+    this.x1 = x1; this.y1 = y1; this.x2 = x2; this.y2 = y2;
+    this.inst = opts.inst || 'guitar';
+    this.scale = opts.scale || 'pentamaj';
+    this.root = opts.root ?? 0;
+    this.oct = opts.oct ?? 0;
+    this.chord = !!opts.chord;
+    this.born = performance.now();
+    this.glow = 0;               // 拨奏高亮衰减
+    this.badgeW = 64;            // 徽章芯片宽(Renderer 每帧刷新, 命中测试用)
+  }
+  get len() { return Math.hypot(this.x2 - this.x1, this.y2 - this.y1); }
+  get notes() { return Math.max(2, Math.min(CFG.maxNotes, Math.round(this.len / CFG.noteSpacingPx))); }
+  get instDef() { return INSTRUMENTS[this.inst]; }
+  mid() { return { x: (this.x1 + this.x2) / 2, y: (this.y1 + this.y2) / 2 }; }
+  noteAt(x, y) {
+    const dx = this.x2 - this.x1, dy = this.y2 - this.y1;
+    const L2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((x - this.x1) * dx + (y - this.y1) * dy) / L2));
+    return Math.max(0, Math.min(this.notes - 1, Math.floor(t * this.notes)));
+  }
+  midiOf(idx) {
+    const inst = this.instDef;
+    if (inst.family === 'kit') return idx;
+    return degreeMidi(this.scale, this.root, inst.oct + this.oct, idx);
+  }
+  labelOf(idx) {
+    const inst = this.instDef;
+    if (inst.family === 'kit') return inst.kit[Math.min(idx, inst.kit.length - 1)]?.label ?? '';
+    return NOTE_NAMES[this.midiOf(idx) % 12];
+  }
+  nearEnd(x, y) {
+    const d1 = Math.hypot(x - this.x1, y - this.y1), d2 = Math.hypot(x - this.x2, y - this.y2);
+    if (d1 < CFG.endR && d1 <= d2) return 1;
+    if (d2 < CFG.endR) return 2;
+    return 0;
+  }
+  nearBadge(x, y) {
+    // 命中区=可见徽章芯片矩形(中心在弦中点上方16px)外扩pad — 与视觉严格一致, 不压弦体
+    const pad = COARSE ? 14 : 8;
+    const m = this.mid();
+    const w = this.badgeW || 64;
+    return Math.abs(x - m.x) <= w / 2 + pad && Math.abs(y - (m.y - 16)) <= 11 + pad;
+  }
+}
+
+/* ============================================================
+ * 视频坐标 -> 视口像素映射(object-fit: contain 等效, 完整画面居中)
+ * ============================================================ */
+const VideoMap = {
+  scale: 1, ox: 0, oy: 0, vw: 1, vh: 1, ready: false,
+  update(video) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return;
+    this.vw = vw; this.vh = vh;
+    this.scale = Math.min(innerWidth / vw, innerHeight / vh);   // object-fit: contain 基准
+    this.ox = (innerWidth - vw * this.scale) / 2;
+    this.oy = (innerHeight - vh * this.scale) / 2;
+    // 画面缩放(设置项 zoom): 以屏幕中心为原点放大互动区, 竖屏补偿 contain 偏小
+    const z = Number(Settings.get('zoom')) || 1;
+    if (z !== 1) {
+      this.ox = innerWidth / 2 + (this.ox - innerWidth / 2) * z;
+      this.oy = innerHeight / 2 + (this.oy - innerHeight / 2) * z;
+      this.scale *= z;
+    }
+    this.ready = true;
+  },
+  // pt 是归一化坐标(0~1): 像素 = 偏移 + pt × 视频尺寸 × scale (v1.2.3 前漏乘 vw/vh → 全堆左上角)
+  p(pt) { return { x: this.ox + pt.x * this.vw * this.scale, y: this.oy + pt.y * this.vh * this.scale }; },
+};
+
+/* ---------- 模型/wasm 预载(带进度) ----------
+ * 手机经 Tailscale 中继时首载 ~17MB 可能很慢, 提前后台预载并显示进度,
+ * 同时靠 serve.py 的 immutable 缓存让二次打开秒开。 */
+async function loadRuntimeAssets(onProgress) {
+  const base = './vendor/mediapipe/';
+  const names = ['vision_bundle.js', 'wasm/vision_wasm_internal.js',
+                 'wasm/vision_wasm_internal.wasm', 'hand_landmarker.task'];
+  let total = 0, loaded = 0;
+  const sizes = await Promise.all(names.map(async n => {
+    try {
+      const r = await fetch(base + n, { method: 'HEAD', cache: 'force-cache' });
+      return parseInt(r.headers.get('Content-Length') || '0', 10);
+    } catch (e) { return 0; }
+  }));
+  total = sizes.reduce((a, b) => a + b, 0);
+  const track = async (n, known) => {
+    try {
+      const res = await fetch(base + n, { cache: 'force-cache' });
+      if (!res.ok) return;
+      const len = known || parseInt(res.headers.get('Content-Length') || '0', 10);
+      const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+      if (!reader) { loaded += len; onProgress(loaded / Math.max(total, 1) * 100); return; }
+      for (;;) {
+        const r = await reader.read();
+        if (r.done) break;
+        loaded += r.value.length;
+        onProgress(loaded / Math.max(total, 1) * 100);
+      }
+    } catch (e) { /* 预载失败不致命, 正式加载时会重试 */ }
+  };
+  await Promise.all(names.map((n, i) => track(n, sizes[i])));
+  onProgress(100);
+}
+
+/* ============================================================
+ * Interaction — 手势 / 鼠标统一输入层(指针坐标=视口px)
+ * ============================================================ */
+const Input = { mode: null, pointers: [], camHands: 0, fps: 0 };
+
+/* ---------- 摄像头模式: 关键点 -> 指针 ---------- */
+const FINGER_TIPS = [4, 8, 12, 16, 20];
+function updateCamHands(hands) {
+  Input.camHands = hands.length;
+  const now = performance.now();
+  const next = [];
+  for (const h of hands) {
+    const lm = h.pts.map(VideoMap.p.bind(VideoMap));
+    const size = Math.hypot(lm[9].x - lm[0].x, lm[9].y - lm[0].y) || 60;
+    const ratio = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) / size / Settings.get('sens');
+    const px = (lm[4].x + lm[8].x) / 2, py = (lm[4].y + lm[8].y) / 2;
+    const prev = Input.pointers.find(q => q.handed === h.handed) || null;
+    let pinch = prev ? prev.pinch : ratio < CFG.pinchOn * .55;
+    if (pinch && ratio > CFG.pinchOff) pinch = false;        // 滞回
+    if (!pinch && ratio < CFG.pinchOn) pinch = true;
+    const ft = FINGER_TIPS.map((ix, k) => {
+      const old = prev?.fingertips?.[k];
+      return { x: lm[ix].x, y: lm[ix].y, px: old?.x ?? lm[ix].x, py: old?.y ?? lm[ix].y, cool: old?.cool ?? 0 };
+    });
+    next.push({ x: px, y: py, pinch, pinchT: pinch ? (prev?.pinchT ?? now) : 0,
+      strength: Math.max(0, Math.min(1, 1 - ratio / CFG.pinchOff)), fingertips: ft, handed: h.handed, skeleton: lm });
+  }
+  Input.pointers = next;
+}
+
+/* ---------- 拨奏检测: 指尖位移线段跨越琴弦 ---------- */
+const segCross = (ax, ay, bx, by, cx, cy, dx, dy) => {
+  const d1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  const d2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+  const d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+  const d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+  return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+};
+function checkPlucks() {
+  if (UI.menuOpenFor) return;
+  const now = performance.now();
+  for (const p of Input.pointers) {
+    for (const ft of p.fingertips || []) {
+      if (now < ft.cool) continue;
+      const speed = Math.hypot(ft.x - ft.px, ft.y - ft.py);
+      if (speed < 6) continue;                              // <3px/帧 视为静止
+      for (const s of State.strings) {
+        if (!segCross(ft.px, ft.py, ft.x, ft.y, s.x1, s.y1, s.x2, s.y2)) continue;
+        ft.cool = now + CFG.pluckCooldown;
+        pluckString(s, s.noteAt(ft.x, ft.y), Math.max(.3, Math.min(1, speed / 40)), { x: ft.x, y: ft.y });
+        break;
+      }
+    }
+  }
+}
+function pluckString(s, idx, vel, at) {
+  if (s.instDef.family === 'kit') {
+    AudioEngine.playNote(s.inst, idx, vel);
+  } else {
+    AudioEngine.playNote(s.inst, s.midiOf(idx), vel);
+    if (s.chord) {
+      AudioEngine.playNote(s.inst, s.midiOf(idx + 2), vel * .7);
+      AudioEngine.playNote(s.inst, s.midiOf(idx + 4), vel * .55);
+    }
+  }
+  s.glow = 1;
+  const a = at || s.mid();
+  FX.burst(a.x, a.y, s.instDef.color, vel);
+  FX.ripple(a.x, a.y, s.instDef.color);
+  FX.notePop(a.x, a.y, s.labelOf(idx), s.instDef.color);
+  State.plucks++;
+}
+
+/* ---------- 摄像头模式: 造弦 / 拖端点 / 徽章 / 悬停选中 ---------- */
+const CamGesture = {
+  preview: null, dragging: null, _palm: null, _palmCd: 0, _badgeHold: null,
+  update() {
+    const pinched = Input.pointers.filter(p => p.pinch);
+    /* —— 双开手掌手势: 并拢=关菜单 / 先并拢再拉开=开菜单(与捏合绷弦严格区分) —— */
+    const openPalms = Input.pointers.filter(p => !p.pinch);
+    if (openPalms.length >= 2) {
+      const [a, b] = openPalms;
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      const now = performance.now();
+      if (!this._palm) this._palm = { lowSince: 0, armed: false, blockOpen: false };
+      const pg = this._palm;
+      if (d < CFG.palmClosePx) {
+        if (!pg.lowSince) pg.lowSince = now;
+        // 合掌须稳定 0.42s：避免两手演奏时短暂靠近误触
+        if (now - pg.lowSince >= CFG.palmHoldMs) {
+          if (!UI.menuOpenFor) pg.armed = true;   // 松开后才允许开菜单
+        }
+      } else {
+        pg.lowSince = 0;
+        if (pg.armed && !pg.blockOpen && d > CFG.palmOpenPx &&
+            now - (this._palmCdOpen || 0) > 800 && State.strings.length) {
+          UI.openMenu(State.strings[State.strings.length - 1], true);
+          toast('稳定合掌后拉开 · 菜单已打开');
+          this._palmCdOpen = now; pg.blockOpen = true;
+        }
+        // 双手完全分开后，才允许下一次“并拢→拉开”手势
+        if (d > CFG.palmOpenPx * 1.6) this._palm = null;
+      }
+    } else this._palm = null;
+    if (UI.menuOpenFor) {
+      this._badgeHold = null;
+      this.preview = null;
+      this.dragging = null;
+      if (UI._waitForRelease) {
+        if (pinched.length) return;
+        UI._waitForRelease = false;
+      }
+      UI.probeDwell(pinched[0] || Input.pointers[0] || null);
+      return;
+    }
+    // 单手在徽章上稳定捏合，避免扫弦时误开；双手造弦优先。
+    const p = pinched.length === 1 && !this.preview && !this.dragging ? pinched[0] : null;
+    const badge = p && State.strings.find(s => s.nearBadge(p.x, p.y));
+    if (badge) {
+      const now = performance.now();
+      if (!this._badgeHold || this._badgeHold.string !== badge || this._badgeHold.hand !== p.handed) {
+        this._badgeHold = { string: badge, hand: p.handed, since: now, x: p.x, y: p.y };
+        toast('保持捏合，打开乐器菜单');
+      } else if (Math.hypot(p.x - this._badgeHold.x, p.y - this._badgeHold.y) > 35) {
+        this._badgeHold.since = now; this._badgeHold.x = p.x; this._badgeHold.y = p.y;
+      } else if (now - this._badgeHold.since >= 800) {
+        this._badgeHold = null;
+        UI.openMenu(badge, true);
+        UI._waitForRelease = true;
+        toast('菜单已打开 · 松手后选择乐器');
+      }
+      return;
+    }
+    this._badgeHold = null;
+    if (this._releaseAfterMenu) {
+      if (pinched.length) return;
+      this._releaseAfterMenu = false;
+      return;
+    }
+    if (pinched.length >= 2) {                              // 双手捏合: 绷弦预览
+      const [a, b] = pinched;
+      this.preview = { x1: a.x, y1: a.y, x2: b.x, y2: b.y };
+      this.dragging = null;
+      return;
+    }
+    if (this.preview && pinched.length <= 1) {              // 松手成弦
+      const pv = this.preview; this.preview = null;
+      if (Math.hypot(pv.x2 - pv.x1, pv.y2 - pv.y1) >= CFG.minStringPx) {
+        // 造弦完成不再自动抢占菜单；菜单只由稳定双掌手势明确调出
+        commitString(Math.round(pv.x1), Math.round(pv.y1), Math.round(pv.x2), Math.round(pv.y2), { openMenu: false });
+        return;
+      }
+    }
+    this.preview = null;
+    if (pinched.length === 0) {                             // 仅菜单打开时才做悬停命中；闭菜单演奏期不扫 DOM
+      this.dragging = null;
+      if (UI.menuOpenFor) UI.probeDwell(Input.pointers[0] || null);
+      return;
+    }
+    if (pinched.length !== 1) { this.dragging = null; UI.probeDwell(null); return; }
+    const activePointer = pinched[0];
+    if (this.dragging) {
+      const d = this.dragging;
+      d.string[d.end === 1 ? 'x1' : 'x2'] = activePointer.x;
+      d.string[d.end === 1 ? 'y1' : 'y2'] = activePointer.y;
+      if (d.string.len < CFG.minStringPx * .55) { removeString(d.string); this.dragging = null; }
+      return;
+    }
+    for (const s of State.strings) {
+      const e = s.nearEnd(activePointer.x, activePointer.y);
+      if (e) { this.dragging = { string: s, end: e }; return; }
+    }
+    if (UI.menuOpenFor) UI.probeDwell(activePointer);
+  },
+};
+
+/* ---------- 鼠标 / 触摸模式 ----------
+ * 手势冲突裁决(触摸屏无悬停, 划弦=按住拖动=画弦, 必须拆开):
+ *   演奏   任意划动过弦即拨奏(无需按下, 鼠标悬停划过也响)
+ *   画弦   仅在按下「＋画弦」后的武装状态, 空白拖拽成弦, 完成自动解除
+ *   菜单   对徽章"点按"(位移<12px 且 <400ms)才弹, 快速划过绝不弹
+ *   端点   按住端点圆圈拖动调弦长(按住+移动, 与点按天然区分)
+ */
+const Draw = { armed: false };
+function armDraw(on) {
+  Draw.armed = on ?? !Draw.armed;
+  document.body.classList.toggle('armed', Draw.armed);
+  document.querySelector('[data-act="draw"]')?.classList.toggle('hot', Draw.armed);
+  setHint(Draw.armed
+    ? '画弦模式：在空白处按住拖动，松手成弦（Esc 取消）'
+    : '划过琴弦演奏 · 点一下徽章换乐器 · 「＋画弦」新建琴弦');
+  toast(Draw.armed ? '已进入画弦模式：拖拽画出琴弦' : '');
+}
+function disarmQuiet() {
+  if (!Draw.armed) return;
+  Draw.armed = false;
+  document.body.classList.remove('armed');
+  document.querySelector('[data-act="draw"]')?.classList.remove('hot');
+  setHint('划过琴弦演奏 · 点一下徽章换乐器 · 「＋画弦」新建琴弦');
+}
+
+const Mouse = { prev: { x: 0, y: 0 }, drag: null, tap: null };
+
+function initMouseMode() {
+  const track = e => {
+    Input.pointers = [{
+      x: e.clientX, y: e.clientY, pinch: (e.buttons & 1) === 1, strength: 0,
+      fingertips: [{ x: e.clientX, y: e.clientY, px: Mouse.prev.x, py: Mouse.prev.y, cool: 0 }],
+    }];
+    Mouse.prev = { x: e.clientX, y: e.clientY };
+  };
+  window.addEventListener('pointermove', e => {
+    if (Input.mode !== 'mouse') return;
+    track(e);
+    if (Mouse.tap && Math.hypot(e.clientX - Mouse.tap.x, e.clientY - Mouse.tap.y) > 12) Mouse.tap = null;
+    const d = Mouse.drag;
+    if (d && d.string) {
+      d.string[d.end === 1 ? 'x1' : 'x2'] = e.clientX;
+      d.string[d.end === 1 ? 'y1' : 'y2'] = e.clientY;
+      if (d.string.len < CFG.minStringPx * .55) { removeString(d.string); Mouse.drag = null; }
+    } else if (d && d.draw) { d.x1 = e.clientX; d.y1 = e.clientY; }
+    if (!UI.menuOpenFor) checkPlucks();
+  });
+  window.addEventListener('pointerdown', e => {
+    if (Input.mode !== 'mouse') return;
+    if (e.target.closest('.panel, #hud, #start')) return;   // 原生 UI 正常点按
+    Mouse.prev = { x: e.clientX, y: e.clientY };
+    track(e);
+    Mouse.tap = { x: e.clientX, y: e.clientY, t: performance.now() };
+    if (Draw.armed) {
+      Mouse.drag = { draw: true, x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY };
+      return;
+    }
+    // 按住端点拖动(按住+移动; 无移动就不触发任何事)
+    for (const s of State.strings) {
+      const end = s.nearEnd(e.clientX, e.clientY);
+      if (end) { Mouse.drag = { string: s, end }; return; }
+    }
+    Mouse.drag = null;                                      // 空白按下: 待 pointerup 判定是否点按
+  });
+  window.addEventListener('pointerup', e => {
+    if (Input.mode !== 'mouse') return;
+    const d = Mouse.drag; Mouse.drag = null;
+    const tap = Mouse.tap; Mouse.tap = null;
+    if (d && d.draw) {                                      // 武装态画弦
+      if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) >= CFG.minStringPx) {
+        commitString(Math.round(d.x0), Math.round(d.y0), Math.round(e.clientX), Math.round(e.clientY));
+        disarmQuiet();
+      }
+      return;
+    }
+    const isTap = tap && !d && (performance.now() - tap.t < 400);
+    if (!isTap) return;
+    if (UI.menuOpenFor) { UI.closeMenu(); return; }         // 点面板外空白 = 关菜单
+    for (const s of State.strings) {                        // 点徽章(可视芯片矩形) = 开菜单
+      if (s.nearBadge(e.clientX, e.clientY)) { UI.openMenu(s); return; }
+    }
+  });
+  // 长按呼出系统菜单会打断演奏, 屏蔽舞台上 的 contextmenu
+  window.addEventListener('contextmenu', e => {
+    if (!e.target.closest('.panel, #hud, #start')) e.preventDefault();
+  });
+}
+
+/* 桌面快捷键: N 画弦 / H 帮助 / D 示例 / Esc 收起 */
+addEventListener('keydown', e => {
+  if (e.key === 'n' || e.key === 'N') { if (Input.mode === 'mouse') armDraw(); }
+  else if (e.key === 'h' || e.key === 'H') UI.doAction('help');
+  else if (e.key === 'd' || e.key === 'D') UI.doAction('demo');
+  else if (e.key === 'Escape') {
+    disarmQuiet(); UI.closeMenu();
+    document.getElementById('help').classList.remove('open');
+    document.getElementById('settings').classList.remove('open');
+  }
+});
+
+/* ============================================================
+ * State / FX
+ * ============================================================ */
+const State = { strings: [], plucks: 0 };
+let VW = innerWidth, VH = innerHeight;
+
+function commitString(x1, y1, x2, y2, opts = {}) {
+  const s = new AirString(x1, y1, x2, y2, opts);
+  State.strings.push(s);
+  if (!opts.silent) {
+    if (opts.openMenu !== false) UI.openMenu(s);
+    toast(`弦 #${s.id} 已绷好 · 指尖扫过演奏`);
+  }
+  return s;
+}
+function removeString(s) {
+  const i = State.strings.indexOf(s);
+  if (i >= 0) State.strings.splice(i, 1);
+  if (UI.menuOpenFor === s) UI.closeMenu();
+}
+
+const FX = {
+  parts: [], pops: [], ripples: [],
+  burst(x, y, color, vel) {
+    const n = Math.round(6 + 16 * vel);
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, sp = 40 + Math.random() * 260 * vel;
+      this.parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 1, color, r: 1.5 + Math.random() * 2.5 });
+    }
+    const cap = innerWidth <= 600 ? 160 : 360;
+    if (this.parts.length > cap) this.parts.splice(0, this.parts.length - cap);
+  },
+  /** 拨弦扩散光圈: 手机上明显可见的触发反馈 */
+  ripple(x, y, color) {
+    this.ripples.push({ x, y, color, life: 1 });
+    if (this.ripples.length > 12) this.ripples.shift();
+  },
+  notePop(x, y, text, color) {
+    this.pops.push({ x, y, text, color, life: 1 });
+    if (this.pops.length > 24) this.pops.shift();
+  },
+  update(dt) {
+    for (const p of this.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 420 * dt; p.life -= dt * 2.2; }
+    this.parts = this.parts.filter(p => p.life > 0);
+    for (const p of this.ripples) p.life -= dt * 2.0;
+    this.ripples = this.ripples.filter(p => p.life > 0);
+    for (const p of this.pops) { p.y -= 34 * dt; p.life -= dt * 1.1; }
+    this.pops = this.pops.filter(p => p.life > 0);
+    for (const s of State.strings) s.glow = Math.max(0, s.glow - dt * 3);
+  },
+};
+
+let _toastTimer = 0;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+}
+function setHint(msg) { document.getElementById('hint').textContent = msg; }
+
+/* ============================================================
+ * UI — 面板 / 徽章菜单 / 悬停选中(摄像头模式)
+ * ============================================================ */
+const UI = {
+  menuOpenFor: null,
+  _dwell: null, _pinchLocked: false,
+
+  openMenu(s, center) {
+    const refreshing = this.menuOpenFor === s;
+    const menuEl = document.getElementById('menu');
+    const scrollTop = menuEl.scrollTop;
+    this.menuOpenFor = s;
+    const $ = id => document.getElementById(id);
+    $('menuTitle').textContent = `弦 #${s.id} · ${s.instDef.cn}`;
+    // 乐器网格
+    const mi = $('mInst'); mi.innerHTML = '';
+    for (const k of INSTRUMENT_ORDER) {
+      const d = INSTRUMENTS[k];
+      const b = document.createElement('button');
+      b.className = 'chip' + (k === s.inst ? ' on' : '');
+      b.style.color = k === s.inst ? d.color : '';
+      b.textContent = d.cn;
+      b.title = d.name;
+      b.dataset.act = 'pick-inst'; b.dataset.id = k;
+      mi.appendChild(b);
+    }
+    // 音阶 / 调性
+    $('mScale').innerHTML = SCALE_ORDER.map(k =>
+      `<button class="chip${k === s.scale ? ' on' : ''}" data-act="pick-scale" data-id="${k}">${SCALES[k].name}</button>`).join('');
+    $('mKey').innerHTML = NOTE_NAMES.map((n, i) =>
+      `<button class="chip${i === s.root ? ' on' : ''}" data-act="pick-key" data-id="${i}">${n}</button>`).join('');
+    $('mOct').textContent = s.oct >= 0 ? '+' + s.oct : s.oct;
+    document.querySelector('[data-act="chord"]').classList.toggle('on', s.chord);
+    const menu = $('menu');
+    menu.classList.add('open');
+    if (refreshing) { menu.scrollTop = scrollTop; return; }
+    // 锚定到弦中点并夹在视口内; center=true 时居中(掌势打开)
+    const m = center ? { x: innerWidth / 2, y: innerHeight / 2 } : s.mid(), r = 14;
+    const w = Math.min(480, innerWidth * .94), h = Math.min(menu.scrollHeight || 560, innerHeight * .8);
+    menu.style.left = Math.max(r, Math.min(innerWidth - w - r, m.x - w / 2)) + 'px';
+    menu.style.top = Math.max(r, Math.min(innerHeight - h - r, m.y - h / 2)) + 'px';
+  },
+  closeMenu() { this.menuOpenFor = null; this._dwell = null; this._activatedKey = null; this._waitForRelease = false; document.getElementById('menu').classList.remove('open'); },
+
+  /** 摄像头模式: 指针悬停面板/按钮 -> 停顿选中 或 捏合点击 */
+  probeDwell(pointer) {
+    const hot = pointer ? this.hitTest(pointer) : null;
+    document.querySelectorAll('.hot').forEach(el => el.classList.remove('hot'));
+    this._hover = hot;
+    if (!hot) { this._dwell = null; this._pinchLocked = !!pointer?.pinch; this._activatedKey = null; return; }
+    const key = hot.act + ':' + (hot.id || '');
+    if (this._activatedKey && this._activatedKey !== key) this._activatedKey = null;
+    hot.el.classList.add('hot');
+    if (!pointer.pinch) this._pinchLocked = false;
+    if (this._activatedKey === key) return;
+    const now = performance.now();
+    if (!this._dwell || this._dwell.el !== hot.el) this._dwell = { el: hot.el, t: now };
+    // 捏合瞬间触发(上升沿)
+    if (pointer.pinch && !this._pinchLocked) { this._pinchLocked = true; this.activate(hot); return; }
+    if (!pointer.pinch) this._pinchLocked = false;
+    // 滑条: 捏住时按 x 位置取值
+    if (hot.slider && pointer.pinch) {
+      const rect = hot.el.getBoundingClientRect();
+      const t = Math.max(0, Math.min(1, (pointer.x - rect.left) / rect.width));
+      const v = parseFloat(hot.el.min) + t * (parseFloat(hot.el.max) - parseFloat(hot.el.min));
+      this.applySlider(hot.el.dataset.slider, v);
+    }
+  },
+  hitTest(pointer) {
+    const el = document.elementFromPoint(pointer.x, pointer.y);
+    if (!el) return null;
+    const act = el.closest?.('[data-act]');
+    if (act) return { el: act, act: act.dataset.act, id: act.dataset.id };
+    // 扩大两个角按钮的命中范围；已有控件优先，避免覆盖其他选项。
+    if (this.menuOpenFor) {
+      const menu = document.getElementById('menu');
+      const bounds = menu.getBoundingClientRect();
+      if (pointer.x >= bounds.left && pointer.x <= bounds.right && pointer.y >= bounds.top && pointer.y <= bounds.bottom) {
+        let nearest = null, distance = 25;
+        for (const button of menu.querySelectorAll('[data-act="confirm-menu"], [data-act="del-string"]')) {
+          const r = button.getBoundingClientRect();
+          // 滚出菜单可视区域的按钮不参与吸附。
+          if (r.bottom <= bounds.top || r.top >= bounds.bottom) continue;
+          const dx = Math.max(r.left - pointer.x, 0, pointer.x - r.right);
+          const dy = Math.max(r.top - pointer.y, 0, pointer.y - r.bottom);
+          const d = Math.hypot(dx, dy);
+          if (d < distance) { distance = d; nearest = button; }
+        }
+        if (nearest) return { el: nearest, act: nearest.dataset.act };
+      }
+    }
+    const slider = el.closest?.('input[type="range"]');
+    if (slider) return { el: slider, slider: true };
+    return null;
+  },
+  activate(hot) {
+    if (hot.slider) return;
+    this._activatedKey = hot.act + ':' + (hot.id || '');
+    if (hot.act === 'pick-inst' || hot.act === 'pick-scale' || hot.act === 'pick-key') {
+      this.pickOption(hot.act, hot.id); return;
+    }
+    this.doAction(hot.act);
+    this._dwell = null;
+  },
+  pickOption(act, id) {
+    const s = this.menuOpenFor; if (!s) return;
+    if (act === 'pick-inst') { s.inst = id; }
+    if (act === 'pick-scale') s.scale = id;
+    if (act === 'pick-key') s.root = parseInt(id, 10);
+    this.openMenu(s);                        // 刷新高亮
+    // 试听一声
+    AudioEngine.playNote(s.inst, s.midiOf(Math.floor(s.notes / 2)), .7);
+  },
+  applySlider(key, v) {
+    Settings.set(key, v);
+    const el = document.getElementById({ vol: 'sVol', echo: 'sEcho', rev: 'sRev', sens: 'sSens', zoom: 'sZoom' }[key]);
+    if (el) el.value = v;
+  },
+
+  doAction(act) {
+    const help = document.getElementById('help'), settings = document.getElementById('settings');
+    switch (act) {
+      case 'help': settings.classList.remove('open'); help.classList.toggle('open'); break;
+      case 'settings': help.classList.remove('open'); this.syncSettings(); settings.classList.toggle('open'); break;
+      case 'close-panel': help.classList.remove('open'); settings.classList.remove('open'); this.closeMenu(); break;
+      case 'confirm-menu': this.closeMenu(); CamGesture._releaseAfterMenu = true; toast('已完成，松手后继续演奏'); break;
+      case 'demo': demoStage(); break;
+      case 'draw':
+        if (Input.mode === 'mouse') armDraw();
+        else toast('摄像头模式：双手捏合、向两侧拉开即可绷弦');
+        break;
+      case 'clear': State.strings.length = 0; this.closeMenu(); toast('已清空全部琴弦'); break;
+      case 'oct-down': if (this.menuOpenFor) { this.menuOpenFor.oct = Math.max(-3, this.menuOpenFor.oct - 1); this.openMenu(this.menuOpenFor); } break;
+      case 'oct-up': if (this.menuOpenFor) { this.menuOpenFor.oct = Math.min(3, this.menuOpenFor.oct + 1); this.openMenu(this.menuOpenFor); } break;
+      case 'chord': if (this.menuOpenFor) { this.menuOpenFor.chord = !this.menuOpenFor.chord; this.openMenu(this.menuOpenFor); } break;
+      case 'del-string': if (this.menuOpenFor) { const id = this.menuOpenFor.id; removeString(this.menuOpenFor); CamGesture._releaseAfterMenu = true; toast(`弦 #${id} 已删除，松手后继续演奏`); } break;
+      case 'start-cam': Boot.startCamera(); break;
+      case 'start-mouse': Boot.startMouse(); break;
+    }
+  },
+  syncSettings() {
+    const s = Settings.all();
+    document.getElementById('sVol').value = s.vol;
+    document.getElementById('sEcho').value = s.echo;
+    document.getElementById('sRev').value = s.rev;
+    document.getElementById('sSens').value = s.sens;
+    document.getElementById('sZoom').value = s.zoom ?? 1.3;
+    document.getElementById('sVideo').checked = s.showVideo;
+  },
+};
+// 原生点击委托(鼠标模式 + 面板按钮)
+document.addEventListener('click', e => {
+  if (Input.mode === 'cam' && !e.target.closest?.('.panel, #hud, #start')) {
+    if (UI.menuOpenFor) { UI.closeMenu(); return; }
+    const s = State.strings.find(s => s.nearBadge(e.clientX, e.clientY));
+    if (s) { UI.openMenu(s); return; }
+  }
+  const t = e.target.closest?.('[data-act]');
+  if (!t || t.tagName === 'INPUT') return;
+  UI.doAction(t.dataset.act);
+  if (['pick-inst', 'pick-scale', 'pick-key'].includes(t.dataset.act)) UI.pickOption(t.dataset.act, t.dataset.id);
+});
+document.addEventListener('input', e => {
+  const el = e.target;
+  if (el.matches?.('input[type="range"][data-slider]')) Settings.set(el.dataset.slider, parseFloat(el.value));
+  if (el.id === 'sVideo') Settings.set('showVideo', el.checked);
+});
+
+function demoStage() {
+  State.strings.length = 0;
+  UI.closeMenu();
+  const w = VW, h = VH;
+  commitString(w * .07, h * .74, w * .46, h * .62, { inst: 'guitar', scale: 'pentamin', root: 9, silent: true });
+  commitString(w * .28, h * .40, w * .72, h * .36, { inst: 'piano', scale: 'major', root: 0, silent: true });
+  commitString(w * .76, h * .58, w * .90, h * .44, { inst: 'drums', silent: true });
+  toast('示例舞台已就位 · 指尖(或鼠标)快速划过琴弦');
+}
+
+/* ============================================================
+ * Renderer
+ * ============================================================ */
+const Renderer = (() => {
+  const cv = document.getElementById('stage');
+  const g = cv.getContext('2d');
+  function resize() {
+    VW = innerWidth; VH = innerHeight;
+    // 手机常见 DPR=3/4：全屏 Canvas 原样重绘会把像素工作量放大 9~16 倍
+    const dpr = Math.min(devicePixelRatio || 1, innerWidth <= 900 ? CFG.canvasDprCap : 2);
+    cv.width = Math.round(VW * dpr); cv.height = Math.round(VH * dpr);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  resize();
+  addEventListener('resize', resize);
+
+  function drawString(s) {
+    const col = s.instDef.color;
+    const age = Math.min(1, (performance.now() - s.born) / 300);
+    g.save();
+    g.globalAlpha = age;
+    // 弦体
+    g.strokeStyle = col;
+    g.lineWidth = 2.5 + s.glow * 2.5;
+    g.shadowColor = col; g.shadowBlur = 10 + s.glow * 26;
+    g.beginPath(); g.moveTo(s.x1, s.y1); g.lineTo(s.x2, s.y2); g.stroke();
+    g.shadowBlur = 0;
+    // 音符点 / 鼓分区标签
+    const n = s.notes, dx = (s.x2 - s.x1) / n, dy = (s.y2 - s.y1) / n;
+    g.fillStyle = col;
+    g.font = '600 11px "Noto Sans SC", sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (let i = 0; i < n; i++) {
+      const x = s.x1 + dx * (i + .5), y = s.y1 + dy * (i + .5);
+      g.globalAlpha = age * .85;
+      g.beginPath(); g.arc(x, y, 3, 0, Math.PI * 2); g.fill();
+      if (s.instDef.family === 'kit') { g.globalAlpha = age * .8; g.fillStyle = '#fff'; g.fillText(s.labelOf(i), x, y - 12); g.fillStyle = col; }
+    }
+    // 端点
+    g.globalAlpha = age * .9;
+    for (const [x, y] of [[s.x1, s.y1], [s.x2, s.y2]]) {
+      g.beginPath(); g.arc(x, y, 5, 0, Math.PI * 2);
+      g.strokeStyle = col; g.lineWidth = 2; g.stroke();
+    }
+    // 徽章
+    const m = s.mid();
+    const label = s.instDef.cn + (s.chord ? '·和弦' : '');
+    g.font = '600 12px "Noto Sans SC", sans-serif';
+    const tw = g.measureText(label).width;
+    const bw = tw + 18, bh = 22;
+    s.badgeW = bw;
+    const sel = UI.menuOpenFor === s;
+    g.globalAlpha = age;
+    g.fillStyle = sel ? col : 'rgba(14,17,22,.88)';
+    g.strokeStyle = col; g.lineWidth = sel ? 2 : 1.2;
+    roundRect(m.x - bw / 2, m.y - bh / 2 - 16, bw, bh, 6);
+    g.fill(); g.stroke();
+    g.fillStyle = sel ? '#0e1116' : col;
+    g.fillText(label, m.x, m.y - 16 - bh / 2 + bh / 2);
+    g.restore();
+  }
+  function roundRect(x, y, w, h, r) {
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r);
+    g.closePath();
+  }
+
+  function draw(dt) {
+    g.clearRect(0, 0, VW, VH);
+    // 双手绷弦预览
+    const pv = CamGesture.preview;
+    if (pv && Input.mode === 'cam') {
+      g.save();
+      g.strokeStyle = '#fff'; g.lineWidth = 2; g.setLineDash([8, 8]);
+      g.globalAlpha = .7;
+      g.beginPath(); g.moveTo(pv.x1, pv.y1); g.lineTo(pv.x2, pv.y2); g.stroke();
+      g.restore();
+    }
+    for (const s of State.strings) drawString(s);
+    // 粒子
+    for (const p of FX.parts) {
+      g.globalAlpha = Math.max(0, p.life);
+      g.fillStyle = p.color;
+      g.beginPath(); g.arc(p.x, p.y, p.r, 0, Math.PI * 2); g.fill();
+    }
+    // 拨弦扩散光圈(触发反馈)
+    for (const p of FX.ripples) {
+      const t = 1 - p.life, r = 14 + t * 52;
+      g.globalAlpha = Math.max(0, p.life) * .95;
+      g.strokeStyle = p.color; g.lineWidth = 3.5 * p.life + 1;
+      g.shadowColor = p.color; g.shadowBlur = 16 * p.life;
+      g.beginPath(); g.arc(p.x, p.y, r, 0, Math.PI * 2); g.stroke();
+      g.shadowBlur = 0;
+    }
+    g.globalAlpha = 1;
+    // 音名冒泡
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (const p of FX.pops) {
+      g.globalAlpha = Math.max(0, p.life);
+      g.font = '700 16px "Noto Sans SC", sans-serif';
+      g.fillStyle = p.color;
+      g.fillText(p.text, p.x, p.y - 22);
+    }
+    g.globalAlpha = 1;
+    // 指针(琥珀环) — 摄像头模式
+    if (Input.mode === 'cam') {
+      for (const p of Input.pointers) {
+        const r = CFG.pointerR * (1 - .55 * p.strength);
+        g.strokeStyle = '#f5b83d'; g.lineWidth = 2.5;
+        g.beginPath(); g.arc(p.x, p.y, Math.max(6, r), 0, Math.PI * 2); g.stroke();
+        if (p.pinch) { g.fillStyle = 'rgba(245,184,61,.25)'; g.fill(); }
+        // 骨架 + 指尖点(手机可见性: 高亮描边+发光)
+        if (p.skeleton) {
+          const hot = p.pinch ? 'rgba(255,209,102,.95)' : 'rgba(110,231,255,.8)';
+          g.save();
+          g.strokeStyle = hot; g.lineWidth = 3; g.lineCap = 'round';
+          g.shadowColor = p.pinch ? '#ffd166' : '#6ee7ff'; g.shadowBlur = 10;
+          const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+          g.beginPath();
+          for (const [a, b] of BONES) { g.moveTo(p.skeleton[a].x, p.skeleton[a].y); g.lineTo(p.skeleton[b].x, p.skeleton[b].y); }
+          g.stroke();
+          g.shadowBlur = 0;
+          g.fillStyle = p.pinch ? 'rgba(255,209,102,.95)' : 'rgba(110,231,255,.9)';
+          for (const ix of [4, 8, 12, 16, 20]) {
+            g.beginPath(); g.arc(p.skeleton[ix].x, p.skeleton[ix].y, 5.5, 0, Math.PI * 2); g.fill();
+          }
+          g.restore();
+        }
+      }
+    } else if (Input.mode === 'mouse' && Mouse.drag?.draw) {
+      g.save();
+      g.strokeStyle = '#fff'; g.setLineDash([8, 8]); g.lineWidth = 2; g.globalAlpha = .7;
+      g.beginPath(); g.moveTo(Mouse.drag.x0, Mouse.drag.y0); g.lineTo(Mouse.drag.x1, Mouse.drag.y1); g.stroke();
+      g.restore();
+    }
+  }
+  return { draw, resize };
+})();
+
+/* ============================================================
+ * Boot — 启动 / 主循环
+ * ============================================================ */
+const Boot = {
+  _lastT: 0, _frames: 0, _fpsT: 0, _looping: false,
+  /** 非安全上下文(http+局域网IP/file://)下, 浏览器不弹摄像头授权 — 给分平台指引 */
+  insecureHelp() {
+    const host = location.hostname || '本机IP';
+    const isFile = location.protocol === 'file:';
+    if (isFile) return '当前用 file:// 直接打开了文件，浏览器禁止访问摄像头。<br>请在本目录运行 <b>./serve.sh</b>，然后电脑开 <b>http://localhost:8765</b>、手机开 <b>https://' + host + ':8443</b>。';
+    return '当前页面是 <b>http://' + host + '</b>（非安全上下文），Chrome / Safari 对这类页面<b>不会弹出摄像头授权</b>。<br>'
+      + '· 手机：改开 <b>https://' + host + ':8443</b>，证书提示选「<b>高级 → 继续访问</b>」（自签证书，仅本局域网使用）<br>'
+      + '· 电脑：直接用 <b>http://localhost:8765</b>（localhost 属安全上下文，无需证书）<br>'
+      + '· 或先用「用鼠标 / 触摸演奏」，不需要摄像头。';
+  },
+  /** 预载手部追踪模型 — 首次 ~9MB, 后台缓存 + 进度显示; 完成后常驻"已就绪"提示 */
+  warmup() {
+    if (!window.isSecureContext) return;
+    const lf = document.getElementById('loadfoot');
+    if (lf) lf.textContent = '正在预载手部追踪模型…（首次约 9MB，仅此一次）';
+    this.warm = loadRuntimeAssets(p => {
+      if (!lf) return;
+      lf.textContent = p >= 100 ? '✓ 模型已就绪，点「启动摄像头演奏」即用' :
+        '正在预载手部追踪模型 ' + Math.round(p) + '%（首次约 9MB，仅此一次）';
+    }).catch(() => { if (lf) lf.textContent = '⚠ 预载中断（链路抖动），点「启动摄像头演奏」会自动重试'; });
+  },
+  async startCamera() {
+    AudioEngine.init();
+    const err = document.getElementById('camErr');
+    const lf = document.getElementById('loadfoot');
+    err.style.display = 'none';
+    if (!window.isSecureContext) {
+      err.innerHTML = this.insecureHelp();
+      err.style.display = 'block';
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      err.textContent = '当前浏览器不支持摄像头访问（需较新的 Chrome / Edge / Safari），可改用「用鼠标 / 触摸演奏」。';
+      err.style.display = 'block';
+      return;
+    }
+    const video = document.getElementById('cam');
+    if (this._startingCamera) return;
+    this._startingCamera = true;
+    try {
+      if (!this.warm) this.warmup();  // 旧标签页/未预载时兜底: 点启动才开始加载也要有进度
+      if (lf) lf.textContent = '正在加载手部追踪模型…（首次约 9MB，完成后自动进入）';
+      if (this.warm) { try { await this.warm; } catch (e) {} }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        // 手势模型不需要 720p；960×540 可显著降低 iPad 摄像头传输与推理发热
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 20, max: 30 }, facingMode: 'user' }, audio: false,
+      });
+      video.srcObject = stream;
+      await video.play();
+      // 元数据就绪保障: 部分移动端 play() 返回时 videoWidth 仍为 0, 映射会退化为恒等(全堆左上角)
+      if (!video.videoWidth) await new Promise(res => {
+        video.addEventListener('loadedmetadata', res, { once: true });
+        setTimeout(res, 3000);
+      });
+      await HandTracker.start(video);
+      VideoMap.update(video);
+      this.enter('cam');
+      if (lf) lf.textContent = '';
+      setHint('双手捏合向两侧拉开 → 绷弦；指尖扫过琴弦 → 演奏；捏住徽章约 1 秒 → 换乐器');
+    } catch (e) {
+      video.srcObject?.getTracks().forEach(track => track.stop());
+      video.srcObject = null;
+      const msg = String(e?.message || e);
+      if (/Permission|NotAllowed/i.test(msg)) {
+        err.innerHTML = '摄像头权限被拒绝。请在浏览器地址栏锁形/调形图标里把摄像头设为「允许」后重试；手机需用 <b>https</b> 地址访问才会出现授权弹窗。';
+      } else if (/NotFound|Devices/i.test(msg)) {
+        err.textContent = '未检测到摄像头设备（本机无摄像头或被占用）。可改用「用鼠标 / 触摸演奏」。';
+      } else {
+        err.textContent = `摄像头或模型加载失败：${msg}。可改用鼠标模式。`;
+      }
+      err.style.display = 'block';
+    } finally {
+      this._startingCamera = false;
+    }
+  },
+  startMouse() {
+    AudioEngine.init();
+    this.enter('mouse');
+    initMouseMode();
+    setHint('划过琴弦演奏 · 点一下徽章换乐器 · 「＋画弦」新建琴弦');
+  },
+  enter(mode) {
+    Input.mode = mode;
+    document.getElementById('start').classList.add('hidden');
+    document.getElementById('hud').classList.remove('hidden');
+    document.getElementById('status').classList.remove('hidden');
+    document.getElementById('hint').classList.remove('hidden');
+    document.body.classList.toggle('show-video', mode === 'cam' && Settings.get('showVideo'));
+    const dg = document.getElementById('diag');
+    if (dg) dg.style.display = (mode === 'cam' && location.search.includes('debug')) ? 'block' : 'none';
+    const gd = document.getElementById('guide');
+    if (gd) {
+      gd.innerHTML = mode === 'cam' ? [
+        '<b>绷弦</b>：双手捏合，向两侧拉开',
+        '<b>弹拨</b>：指尖快速扫过琴弦',
+        '<b>换乐器</b>：单手捏住对应弦的徽章约 1 秒，再松手',
+        '<b>也可开菜单</b>：双手稳定合掌约半秒，再拉开（选择最后一根弦）',
+        '<b>选乐器</b>：移动手到选项上，捏合选择，松手后可继续选择',
+        '<b>完成</b>：移动手到「✓ 完成」，捏合关闭并保留选择',
+      ].join('<br>') : '';
+      gd.style.display = mode === 'cam' ? 'block' : 'none';
+    }
+    this._applyVideo = () => {
+      document.body.classList.toggle('show-video', Input.mode === 'cam' && Settings.get('showVideo'));
+      document.documentElement.style.setProperty('--vz', String(Number(Settings.get('zoom')) || 1));
+    };
+    if (!this._looping) { this._looping = true; requestAnimationFrame(t => this.loop(t)); }
+  },
+  loop(t) {
+    if (document.hidden) { this._looping = false; return; }
+    // Limit canvas work on high-refresh displays while keeping input responsive.
+    if (this._lastT && t - this._lastT < 1000 / 30) {
+      requestAnimationFrame(tt => this.loop(tt));
+      return;
+    }
+    try {
+    const dt = Math.min(.05, (t - this._lastT) / 1000 || .016);
+    this._lastT = t;
+    this._frames++;
+    if (t - this._fpsT > 1000) { Input.fps = this._frames; this._frames = 0; this._fpsT = t; }
+    if (Input.mode === 'cam') {
+      const video = document.getElementById('cam');
+      VideoMap.update(video);
+      const hands = window.__fakeHands || HandTracker.detect();
+      if (hands) updateCamHands(hands);
+      CamGesture.update();
+      if (hands && !CamGesture._releaseAfterMenu) checkPlucks();
+      // 临时诊断角标: 排查手机端坐标映射问题, 稳定后移除
+      const dg = document.getElementById('diag');
+      if (dg) {
+        const p0 = Input.pointers[0];
+        dg.textContent = `cam ${video.videoWidth}x${video.videoHeight} | map s=${VideoMap.scale.toFixed(2)} ox=${Math.round(VideoMap.ox)} oy=${Math.round(VideoMap.oy)} | p0=${p0 ? Math.round(p0.x) + ',' + Math.round(p0.y) : '-'} | ${Input.camHands}手 ${Input.fps}fps`;
+      }
+    }
+    FX.update(dt);
+    Renderer.draw(dt);
+    // 状态指示
+    const dot = document.getElementById('statusDot'), txt = document.getElementById('statusText');
+    if (Input.mode === 'cam') {
+      dot.className = 'dot ' + (Input.camHands >= 2 ? 'ok' : Input.camHands === 1 ? 'warn' : '');
+      txt.textContent = `${Input.camHands} 手 · ${Input.fps}fps · ${State.strings.length} 弦`;
+    } else {
+      dot.className = 'dot ok';
+      txt.textContent = `鼠标模式 · ${State.strings.length} 弦 · 已拨 ${State.plucks} 次`;
+    }
+    } catch (e) { console.error('[loop] 帧内异常(不杀循环):', e); }
+    requestAnimationFrame(tt => this.loop(tt));
+  },
+};
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && Input.mode && !Boot._looping) {
+    Boot._lastT = 0;
+    Boot._looping = true;
+    requestAnimationFrame(t => Boot.loop(t));
+  }
+});
+// 设置变化即时反映视频显示
+const _origSet = Settings.set.bind(Settings);
+Settings.set = (k, v) => { _origSet(k, v); Boot._applyVideo?.(); };
+
+/* ---------- 调试与自动验收 API ---------- */
+window.__errs = [];
+window.addEventListener('error', e => window.__errs.push(String(e.message)));
+window.addEventListener('unhandledrejection', e => window.__errs.push('rejection: ' + String(e.reason)));
+// 浏览器自动播放策略: 任意首次交互时恢复 AudioContext
+for (const ev of ['pointerdown', 'keydown'])
+  window.addEventListener(ev, () => AudioEngine.resume(), { passive: true });
+// 进入页面即检测: 非安全上下文直接在启动卡上给出摄像头指引(不等用户点了才报错)
+if (!window.isSecureContext) {
+  const el = document.getElementById('camErr');
+  el.innerHTML = Boot.insecureHelp();
+  el.style.display = 'block';
+} else {
+  Boot.warmup();
+}
+
+window.AIRSTRING = {
+  version: '1.1.0',
+  get state() { return { mode: Input.mode, strings: State.strings.length, plucks: State.plucks, fps: Input.fps, camHands: Input.camHands }; },
+  strings: () => State.strings.map(s => ({ id: s.id, inst: s.inst, len: Math.round(s.len), notes: s.notes })),
+  instruments: () => INSTRUMENT_ORDER,
+  pluck: (instId, midi, vel) => AudioEngine.playNote(instId, midi, vel ?? .8),
+  resume: () => AudioEngine.resume(),
+  audioState: () => AudioEngine.ctx?.state ?? 'none',
+  errors: () => window.__errs,
+  energy: () => AudioEngine.energy(),
+  demo: demoStage,
+  createString: (x1, y1, x2, y2, opts) => commitString(x1, y1, x2, y2, { silent: true, ...opts }),
+  loadTracker: () => HandTracker.start(document.getElementById('cam')),
+  settings: () => Settings.all(),
+};
+
+/* 调试/测试钩子: const 绑定不挂 window, CDP 隔离世界取不到 */
+window.__dbg = { VideoMap, updateCamHands, Input, Boot, State, commitString, CamGesture, FX };
+</script>
+</body>
+</html>

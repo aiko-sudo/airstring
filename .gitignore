@@ -1,0 +1,13 @@
+# Local certificates and runtime state
+.certs/
+__pycache__/
+*.py[cod]
+
+# Private-agent and local-operational material
+AGENTS.md
+docs/04-pitfalls.md
+
+# Editor / OS files
+.DS_Store
+.vscode/
+.idea/
